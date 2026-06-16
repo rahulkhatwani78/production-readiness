@@ -40,6 +40,7 @@ graph LR
     A[Trigger Event] --> B(AWS Lambda Function)
     B --> C{Handler Code}
     C --> D[Response / Action]
+BlockTraffic[API Gateway / S3 / EventBridge] -.-> A
 ```
 
 *   **Trigger:** The event source that wakes up your Lambda. Examples include:
@@ -87,14 +88,14 @@ Understanding how Lambda provisions containers is crucial for production perform
 *   **Warm Start:** When the next customer orders 2 minutes later, the machine is already hot and active. The barista serves the coffee in 15 seconds.
 
 ### How it Translates to Lambda
-1.  When a Lambda is triggered after being idle, AWS must create a virtual container environment, download your zip package, start the Node.js/Python runtime, and load your code. This delay is a **Cold Start** (takes 100ms to 3 seconds).
-2.  After the function finishes running, AWS keeps the container active ("warm") for a few minutes (usually 5 to 15 minutes) to handle subsequent requests. If another request arrives, it is processed instantly (**Warm Start**).
+1. When a Lambda is triggered after being idle, AWS must create a virtual container environment, download your zip package, start the Node.js/Python runtime, and load your code. This delay is a **Cold Start** (takes 100ms to 3 seconds).
+2. After the function finishes running, AWS keeps the container active ("warm") for a few minutes (usually 5 to 15 minutes) to handle subsequent requests. If another request arrives, it is processed instantly (**Warm Start**).
 
 ### How to Minimize Cold Starts
 *   **Keep Package Sizes Small:** Exclude test files, documentation, and devDependencies.
 *   **Use Lightweight Runtimes:** Node.js, Python, and Go boot up much faster than Java or .NET.
 *   **Keep Code Outside the Handler:** Database connections and heavy libraries should be loaded outside the handler function so they are cached during warm starts.
-*   **Provisioned Concurrency:** An AWS feature that keeps a specific number of containers pre-warmed at all times (costs extra).
+*   **Provisioned Concurrency:** An AWS feature that keeps a specific number of containers pre-warmed at all times. This eliminates cold starts but incurs a flat hourly fee.
 
 ---
 
@@ -102,60 +103,76 @@ Understanding how Lambda provisions containers is crucial for production perform
 
 A Lambda function is highly secure by default and cannot access any other AWS resources unless explicitly authorized.
 
-### The Employee ID Badge Analogy
-
-When a catering contractor enters a corporate office, they aren't given keys to the CEO's office or the accounting vault. They are given a temporary **ID Badge** that allows access only to the kitchen and the dining hall.
-
-*   An **IAM Execution Role** is that ID badge for your Lambda function.
-*   It defines a set of permissions (policies) specifying what resources your Lambda is allowed to access (e.g., read files from S3, write logs to CloudWatch, or insert data into DynamoDB).
+*   An **IAM Execution Role** defines a set of permissions (policies) specifying what resources your Lambda is allowed to access (e.g., read files from S3, write logs to CloudWatch, or insert data into DynamoDB).
 *   **Rule of Least Privilege:** Always grant only the minimum permissions your function needs to complete its task. Never grant admin (`*`) access.
 
 ---
 
-## 5. Hands-On Deployment Examples (Console & CLI)
+## 5. Step-by-Step Guide: Creating and Testing a Lambda in the AWS Console
 
-Let's look at how to package and deploy your Node.js Lambda function.
+### Step 1: Navigate to Lambda
+1. Log in to the **AWS Management Console**.
+2. In the top search bar, type **Lambda** and select it under Services.
 
-### Method A: Using the AWS Management Console (No Coding Tools)
-1.  Log in to the **AWS Console**.
-2.  Search for **Lambda** -> click **Create function**.
-3.  Choose **Author from scratch**, name your function, and choose **Node.js 20.x** as the runtime.
-4.  In the code editor, paste your JavaScript handler code.
-5.  Click **Deploy**, then click **Test** to configure a mock event and run it.
+### Step 2: Create Function
+1. Click the orange **Create function** button in the top right.
+2. Select **Author from scratch** (default).
+3. Configure the following:
+   * **Function name:** `my-first-lambda`
+   * **Runtime:** Select `Node.js 20.x` (or the latest LTS).
+   * **Architecture:** Select `x86_64` (or `arm64` for slightly cheaper pricing).
+   * **Permissions:** Expand *Change default execution role*. Leave it on *Create a new role with basic Lambda permissions*. This creates a role that automatically grants permissions to write logs to CloudWatch.
+4. Click **Create function** at the bottom.
+
+### Step 3: Write and Deploy Code
+1. Scroll down to the **Code source** section. Double-click `index.mjs` in the file explorer.
+2. Replace the default code with your handler logic.
+3. Click the **Deploy** button above the editor. *Note: Changes do not take effect until deployed.*
+
+### Step 4: Configure a Test Event and Run
+1. Click the drop-down arrow next to the **Test** button and select **Configure test event**.
+2. Set the following:
+   * **Event name:** `MyTestEvent`
+   * **Template:** Select `apigateway-aws-proxy` (if simulating an API Gateway trigger) or use `hello-world`.
+   * **JSON Body:** Modify the payload if needed (e.g., add query string parameters).
+3. Click **Save**.
+4. Click **Test**. You will see a green execution box showing:
+   * **Response:** The JSON response returned by your code.
+   * **Logs:** The console logs written during execution.
+   * **Duration:** The exact execution time (billed).
 
 ---
 
-### Method B: Deploying via AWS CLI (Terminal Commands)
+## 6. Step-by-Step Guide: Deploying and Invoking via AWS CLI
 
-To deploy from your local command line, make sure you have the [AWS CLI installed and configured](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) with your access keys.
+To deploy from your local terminal, make sure you have the AWS CLI installed and configured.
 
-#### Step 1: Initialize Project and Code
-Create a project folder and install a package (e.g., `uuid` to generate IDs).
-
+### Step 1: Set Up Project Files
+Create a clean directory and initialize a Node.js project:
 ```bash
-mkdir my-lambda && cd my-lambda
+mkdir my-cli-lambda && cd my-cli-lambda
 npm init -y
 npm install uuid
 ```
 
-Create `index.js`:
-
+Create `index.js` containing your function:
 ```javascript
 const { v4: uuidv4 } = require('uuid');
 
 exports.handler = async (event) => {
+    console.log("Generating UUID for request...");
     return {
         statusCode: 200,
         body: JSON.stringify({
-            message: "Successfully generated a unique ID!",
+            message: "Successfully generated UUID!",
             id: uuidv4()
         })
     };
 };
 ```
 
-#### Step 2: Package Code into a Zip File
-AWS Lambda expects your code and its `node_modules` folder to be zipped.
+### Step 2: Package Code into a Zip File
+AWS Lambda requires your code and `node_modules` to be uploaded in a flat zip file.
 
 *   **On Windows (PowerShell):**
     ```powershell
@@ -166,51 +183,75 @@ AWS Lambda expects your code and its `node_modules` folder to be zipped.
     zip -r function.zip index.js node_modules package.json
     ```
 
-#### Step 3: Create the Lambda Function via CLI
-Run the following command to deploy the zip file. 
+### Step 3: Create the Execution Role via CLI
+Before creating the function, you must create the IAM Role that allows the Lambda to run and write logs.
 
-> [!NOTE]
-> You will need to replace the `--role` ARN below with your own IAM Lambda Execution Role ARN (created in the IAM console).
+1. Create a trust policy file named `trust-policy.json`:
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Principal": {
+           "Service": "lambda.amazonaws.com"
+         },
+         "Action": "sts:AssumeRole"
+       }
+     ]
+   }
+   ```
+2. Create the IAM Role:
+   ```bash
+   aws iam create-role \
+     --role-name my-lambda-cli-role \
+     --assume-role-policy-document file://trust-policy.json
+   ```
+   *(Take note of the `"Arn"` returned in the JSON response, e.g., `arn:aws:iam::123456789012:role/my-lambda-cli-role`).*
+3. Attach the basic execution policy to allow log writing:
+   ```bash
+   aws iam attach-role-policy \
+     --role-name my-lambda-cli-role \
+     --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+   ```
 
+### Step 4: Deploy the Lambda Function
+Wait a few seconds for the IAM Role to propagate globally, then run:
 ```bash
 aws lambda create-function \
   --function-name my-uuid-generator \
   --runtime nodejs20.x \
-  --role arn:aws:iam::123456789012:role/my-lambda-execution-role \
+  --role arn:aws:iam::123456789012:role/my-lambda-cli-role \
   --handler index.handler \
   --zip-file fileb://function.zip
 ```
-*   `--function-name`: The name of your Lambda.
-*   `--runtime`: The programming language version.
-*   `--role`: The IAM Execution Role ARN giving the Lambda permission to run and write logs.
-*   `--handler`: Pointing to `index.js` and the exported function name `handler` (`index.handler`).
-*   `--zip-file`: Path to the local zip file (prefix `fileb://` is required).
+*   `--handler index.handler`: Directs Lambda to search for `index.js` and run the exported `handler` function.
+*   `fileb://`: Prepares the CLI to upload binary data.
 
-#### Step 4: Invoke (Run) the Function
-You can test the Lambda from your terminal:
-
+### Step 5: Invoke the Function
+Trigger your Lambda from the terminal:
 ```bash
 aws lambda invoke \
   --function-name my-uuid-generator \
   --cli-binary-format raw-in-base64-out \
+  --payload '{"key": "value"}' \
   response.json
 ```
-
-Open `response.json` to view the output:
-
+Read the output inside `response.json`:
 ```json
-{"statusCode":200,"body":"{\"message\":\"Successfully generated a unique ID!\",\"id\":\"a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d\"}"}
+{
+  "statusCode": 200,
+  "body": "{\"message\":\"Successfully generated UUID!\",\"id\":\"2b2e88a3-29a3-4903-8dcf-b8d9b1a50a12\"}"
+}
 ```
 
-#### Step 5: Updating Your Code
-If you modify your JavaScript file, re-zip it and push the update:
-
+### Step 6: Updating Your Code
+If you modify `index.js`, re-zip the files and push the update:
 ```bash
-# 1. Re-zip (On Windows PowerShell)
-Remove-Item function.zip
-Compress-Archive -Path index.js, node_modules, package.json -DestinationPath function.zip
+# Re-zip (On Linux/macOS)
+zip -r function.zip index.js node_modules package.json
 
-# 2. Update Code
+# Update AWS Lambda Deployment
 aws lambda update-function-code \
   --function-name my-uuid-generator \
   --zip-file fileb://function.zip
@@ -218,171 +259,137 @@ aws lambda update-function-code \
 
 ---
 
-## 6. Infrastructure-as-Code: The Serverless Framework
+## 7. Infrastructure-as-Code: The Serverless Framework
 
-Manually zipping your project, uploading it to AWS, setting up an IAM execution role, and configuring an API Gateway route via CLI commands is tedious and error-prone. 
+Manually zipping and uploading code using the console or CLI is error-prone. The **Serverless Framework** compiles your code, packages exclusions, creates necessary IAM roles, configures API Gateways, and handles deployments via a single config file `serverless.yml`.
 
-To automate this, developers use **Infrastructure-as-Code (IaC)** tools. The most popular tool for AWS Lambda is the **Serverless Framework** (often installed as the `serverless` package).
-
-### The Travel Agency Analogy
-
-*   **Manual CLI/Console Deployment:** This is like booking a vacation yourself. You have to call the airline to buy tickets, call the hotel for rooms, call a car rental agency, and purchase travel insurance separately. If you miss one step, your vacation is ruined.
-*   **Serverless Framework:** This is like using an **all-inclusive Travel Agency**. You write a single document listing where you want to go, what hotel you want, and your flight choices. The agency books and configures everything for you in one click.
-
-With Serverless Framework, you define all your functions, triggers, and AWS permissions in a single file: `serverless.yml`.
-
-### Step 1: Install Serverless CLI Globally
-Install the framework command line interface via npm:
-
-```bash
-npm install -g serverless
-```
-
-### Step 2: Initialize a Project
-Create a new Node.js template:
-
-```bash
-serverless create --template aws-nodejs --path my-serverless-api
-cd my-serverless-api
-```
-This generates two key files:
-1.  `serverless.yml`: Your configuration file.
-2.  `handler.js`: Your Lambda JavaScript code.
-
-### Step 3: Write the `serverless.yml` Configuration
-Open `serverless.yml` and configure your API:
+### Example `serverless.yml` Configuration
 
 ```yaml
-service: my-serverless-api
+service: user-profile-service
+
+frameworkVersion: '3'
 
 provider:
   name: aws
   runtime: nodejs20.x
-  region: us-east-1           # AWS region to deploy to
-  stage: dev                  # Stage (dev, staging, prod)
+  region: us-east-1
+  stage: ${opt:stage, 'dev'} # Deploys to dev by default, or use 'prod'
+  memorySize: 512            # Sets default memory size (default is 1024MB)
+  timeout: 10                # Sets execution timeout limit to 10 seconds
   environment:
-    DB_HOST: my-db-host.com   # Shared Environment variables
+    NODE_ENV: ${self:provider.stage}
+    DB_HOST: my-production-db-instance.com
 
 functions:
-  # 1. Define our Lambda function name
-  helloUser:
-    handler: handler.hello    # Points to handler.js file and the hello function
+  getUser:
+    handler: handlers/user.get
     events:
-      - http:                 # Automatically provisions API Gateway!
-          path: user/hello    # URL path (e.g. https://api.com/dev/user/hello)
+      - http:
+          path: users/{id}
           method: get
-          cors: true          # Enables CORS headers automatically
+          cors: true
+  
+  createUser:
+    handler: handlers/user.create
+    events:
+      - http:
+          path: users
+          method: post
+          cors: true
+
+# Package configurations to keep sizes low
+package:
+  patterns:
+    - '!test/**'
+    - '!docs/**'
+    - '!*.md'
+    - '!.git/**'
 ```
 
-### Step 4: Write Your Lambda Code (`handler.js`)
-```javascript
-// handler.js
-module.exports.hello = async (event) => {
-  const name = event.queryStringParameters?.name || "Friend";
-
-  return {
-    statusCode: 200,
-    headers: {
-      "Access-Control-Allow-Origin": "*", // Match serverless.yml CORS config
-    },
-    body: JSON.stringify({
-      message: `Hello ${name}! Successfully processed via Serverless Framework.`,
-    }),
-  };
-};
-```
-
-### Step 5: Commands for Packaging and Deployment
-
-#### A. Packaging Locally (Checking the Zip Bundle)
-If you want to compile your code and see exactly what Serverless will upload to AWS without actually deploying it:
-```bash
-serverless package
-```
-This creates a hidden `.serverless/` folder containing the compiled CloudFormation templates and your code compressed into a `.zip` file. You can inspect this zip file to verify that unnecessary files (like test cases or devDependencies) are excluded.
-
-#### B. Deploying the Entire Stack
-To upload and deploy everything (Lambda, IAM Roles, API Gateway) to your AWS account:
-```bash
-serverless deploy
-```
-*Serverless compiles your stack, packages your code, uploads the zip to an S3 bucket it creates, updates AWS CloudFormation, and outputs the public HTTP URLs for your API endpoints.*
-
-#### C. Fast Update: Deploying Code for a Single Function
-If you only modified code in `handler.js` and did *not* change `serverless.yml`, deploying the full stack takes too long. Update just your code in seconds:
-```bash
-serverless deploy function -f helloUser
-```
-
-#### D. Local Test (Invoking locally without deploying)
-Run your Lambda function on your local machine using a mock event structure:
-```bash
-serverless invoke local -f helloUser --data '{"queryStringParameters": {"name": "Rahul"}}'
-```
-
-#### E. Teardown / Remove
-If you are done testing and want to delete all AWS resources created by this service to avoid accidental bills:
-```bash
-serverless remove
-```
-
----
-
-## 7. Pricing & Concurrency
-
-### Pricing Breakdown
-You are charged for two metrics:
-1.  **Request Count:** $0.20 per 1 million requests.
-2.  **Duration (GB-Seconds):** The time your code runs (in milliseconds) multiplied by the RAM allocated to your function.
-    *   *Example:* If you assign 512MB RAM to a function and it runs for 100ms, it consumes `0.5 GB * 0.1 seconds = 0.05 GB-seconds`.
-
-> [!TIP]
-> **AWS Free Tier Benefit:** AWS offers 1 million free requests and 400,000 GB-seconds of compute time **every single month for free**, even after your first year of account creation. This makes running small, personal projects practically free.
-
-### Concurrency Limits
-*   By default, AWS limits your account to **1,000 concurrent executions** per region.
-*   If your functions receive massive traffic surges and try to run more than 1,000 instances simultaneously, subsequent requests will be throttled (clients receive an HTTP `429 Too Many Requests` error). You can request limit increases from AWS support.
-
----
-
-## 8. AWS Lambda Production Best Practices
-
--   **Keep Functions Single-Purpose:** Don't deploy a massive Express monolith into a single Lambda function ("Fat Lambda"). Instead, break your API endpoints into individual Lambda functions.
--   **Exclude devDependencies from Packages:** When using npm, make sure devTools and test frameworks aren't bundled into the deployment zip. You can enforce this in Serverless Framework by using the `serverless-plugin-typescript` or specifying exclude lists:
-    ```yaml
-    package:
-      patterns:
-        - '!test/**'
-        - '!tsconfig.json'
+### Essential Serverless Framework Commands
+*   **Package Stack Locally:** Compile files and configurations into `.serverless/` without deploying.
+    ```bash
+    serverless package
     ```
--   **Reuse Connections (Global Cache):** Initialize database clients, AWS SDKs, and HTTP clients *outside* of the handler function. This reuses connections on warm starts:
-    ```javascript
-    // GOOD: Connection created ONCE during cold start
-    const dbClient = new DatabaseConnection(); 
-    
-    exports.handler = async (event) => {
-        // Reuses dbClient across warm starts
-        return await dbClient.queryData(event.id); 
-    };
+*   **Deploy Entire Stack:** Deploys Lambda functions, IAM roles, logs, and API gateways.
+    ```bash
+    serverless deploy --stage prod
     ```
--   **Optimize Memory Settings:** More memory doesn't just allocate RAM; AWS scales CPU power proportionally. If your function is slow, increasing memory from 128MB to 512MB might run the code 4x faster, reducing duration and making the execution cheaper.
--   **Configure Timeouts Wisely:** Set a realistic timeout limit (default is 3 seconds, max is 15 minutes). If a database query hangs, a high timeout means your Lambda will run (and bill you) until the timeout expires.
--   **Never Save Secrets in Plain Text:** Do not hardcode API keys or passwords. Use **Environment Variables** in Lambda settings, or load them from **AWS Secrets Manager**.
+*   **Deploy Single Function (Fast Update):** Pushes code updates only, bypassing CloudFormation.
+    ```bash
+    serverless deploy function -f getUser
+    ```
+*   **Test Locally:** Run your Lambda on your local machine using simulated JSON events.
+    ```bash
+    serverless invoke local -f getUser --data '{"pathParameters": {"id": "123"}}'
+    ```
+*   **Tail Logs:** View live CloudWatch logs in your terminal.
+    ```bash
+    serverless logs -f getUser --tail
+    ```
+*   **Teardown:** Deletes all resources created by the framework.
+    ```bash
+    serverless remove
+    ```
 
 ---
 
-## 9. AWS Lambda Summary Checklist
+## 8. Hard and Soft Limits (Reference Table)
 
-- [ ] Write individual, single-purpose functions instead of packing monolithic APIs.
-- [ ] Initialize heavy client SDKs and database connections outside of the handler function.
-- [ ] Allocate appropriate memory (RAM) to balance execution speed and CPU performance.
-- [ ] Configure execution timeout limits to prevent infinite loops from running up charges.
-- [ ] Exclude testing files, configs, and `devDependencies` from the deployment zip.
-- [ ] Create and attach a specific IAM Execution Role utilizing the Rule of Least Privilege.
-- [ ] Use environment variables to supply runtime configurations and secrets.
-- [ ] Package Node.js source files along with the `node_modules` folder inside a single zip file.
-- [ ] Use **Infrastructure-as-Code (IaC)** tools like the **Serverless Framework** (`serverless.yml`) to manage and deploy your Lambda stack.
-- [ ] Inspect packaged sizes locally using `serverless package` to verify exclusions.
-- [ ] Optimize code updates by deploying single functions via `serverless deploy function -f <function_name>`.
-- [ ] Tear down unused stacks using `serverless remove` to avoid ongoing billing.
-- [ ] Keep check on the 1,000 default concurrency limit in your target AWS region.
+| Resource Metric | Limit | Type | Description |
+| :--- | :--- | :--- | :--- |
+| **Timeout Range** | 1 second to 15 minutes | Hard | Max duration code is allowed to run. |
+| **Memory Allocation** | 128 MB to 10,240 MB | Hard | RAM allocated. CPU power scales proportionally. |
+| **Payload Size (Request/Response)** | 6 MB (Synchronous) / 256 KB (Asynchronous) | Hard | Maximum size of input events and responses. |
+| **Deployment Package Size** | 50 MB (zipped) / 250 MB (unzipped) | Hard | Includes code, dependencies, and layers. |
+| **Temporary Storage (`/tmp`)** | 512 MB to 10,240 MB | Configurable | Ephemeral disk space available during execution. |
+| **Account Concurrency Limit** | 1,000 (Default) | Soft | Maximum concurrent instances running across the region (request-based increase available). |
+
+---
+
+## 9. Troubleshooting & Common Gotchas
+
+### A. Lambda Timeout Errors
+*   **Symptom:** Logs show `Task timed out after 3.00 seconds` or similar.
+*   **Causes:**
+    *   The database connection is kept open, preventing the runtime environment from shutting down.
+    *   The database is blocked by a security group (VPC routing issue).
+    *   The request payload or API processing took longer than the configured timeout limit.
+*   **Fixes:**
+    *   Increase the timeout in your `serverless.yml` or AWS Console.
+    *   If using Node.js, set `context.callbackWaitsForEmptyEventLoop = false;` to allow the Lambda execution to return the response immediately without waiting for database connections to close.
+    *   Use connection pooling configurations (e.g. max connections = 1) to prevent exhaustion.
+
+### B. Payload Too Large (`413 Payload Too Large`)
+*   **Symptom:** Invocation fails with payload limits error.
+*   **Fix:** If you need users to upload large files (e.g., 50MB files), do not send the file data through API Gateway and Lambda. Instead, use Lambda to generate an S3 **Pre-signed URL** and return it to the frontend, allowing the user to upload directly to S3.
+
+### C. Cold Start Spikes in Production
+*   **Symptom:** Occasionally, API requests take 2-3 seconds instead of the usual 100ms.
+*   **Fixes:**
+    *   Use lightweight package bundles. Utilize bundlers like Esbuild or Webpack to tree-shake and minify code.
+    *   Move SDK and database instantiations outside of the handler function.
+    *   Configure **Provisioned Concurrency** for high-traffic endpoints.
+
+### D. Memory Exhaustion
+*   **Symptom:** Logs show `Process exited before completing request` or `Memory Size: 128 MB Max Memory Used: 128 MB`.
+*   **Fix:** Increase memory settings. If memory is close to the limit, allocate more memory (e.g. 512MB or 1024MB). Because CPU scales with memory, this often decreases runtime duration, neutralizing the cost increase.
+
+---
+
+## 10. AWS Lambda Production Summary Checklist
+
+- [x] Write individual, single-purpose functions instead of packing monolithic APIs.
+- [x] Initialize heavy client SDKs and database connections outside of the handler function.
+- [x] Allocate appropriate memory (RAM) to balance execution speed and CPU performance.
+- [x] Configure execution timeout limits to prevent infinite loops from running up charges.
+- [x] Exclude testing files, configs, and `devDependencies` from the deployment zip.
+- [x] Create and attach a specific IAM Execution Role utilizing the Rule of Least Privilege.
+- [x] Use environment variables to supply runtime configurations and secrets.
+- [x] Package Node.js source files along with the `node_modules` folder inside a single zip file.
+- [x] Use **Infrastructure-as-Code (IaC)** tools like the **Serverless Framework** (`serverless.yml`) to manage and deploy your Lambda stack.
+- [x] Inspect packaged sizes locally using `serverless package` to verify exclusions.
+- [x] Optimize code updates by deploying single functions via `serverless deploy function -f <function_name>`.
+- [x] Tear down unused stacks using `serverless remove` to avoid ongoing billing.
+- [x] Keep check on the 1,000 default concurrency limit in your target AWS region.
