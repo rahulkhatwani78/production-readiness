@@ -7,14 +7,9 @@ on:
   # Triggers the workflow on push or pull request events but only for the "master" branch
   push:
     branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
-
-env:
-  NAME: Rahul
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
@@ -34,5 +29,5 @@ jobs:
           curl -X POST \
           -H "Content-Type: application/json" \
           -H "x-api-key: ${{ secrets.API_KEY }}" \
-          -d '{"to": "1077811838", "message": "New commit Pushed to the ${{ github.ref_name }} branch"}' \
+          -d '{"to": "1077811838", "message": "New commit pushed to the ${{ github.ref_name }} branch by ${{ github.event.head_commit.author.name || github.actor }}"}' \
           ${{ secrets.API_URL }}
