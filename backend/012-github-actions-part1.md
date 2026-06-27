@@ -1,4 +1,4 @@
-# GitHub Actions & CI/CD Pipelines: Basics (Beginner's Guide)
+# GitHub Actions & CI/CD Pipelines: Basics
 
 In professional software development, you don't manually run tests, build docker images, or copy files to servers every time you write code. Doing this manually is slow, boring, and highly prone to human error.
 
